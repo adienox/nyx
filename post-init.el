@@ -1,9 +1,14 @@
 ;;; post-init.el --- Post Init -*- no-byte-compile: t; lexical-binding: t; -*-
 
-(add-to-list 'load-path "~/.config/minimal-emacs.d/libs/")
+(defvar nox/emacs-directory (concat (getenv "HOME") "/.config/nyx")
+  "Base Emacs directory.")
+(defvar nox/notes-directory (concat (getenv "HOME") "/Documents/org")
+  "Base notes directory.")
+
+(add-to-list 'load-path (concat nox/emacs-directory "/libs/"))
 
 ;; Specify the custom file path and load the custom file quietly
-(setq custom-file "~/.config/minimal-emacs.d/custom-vars.el")
+(setq custom-file (concat nox/emacs-directory "/custom-vars.el"))
 (load custom-file 'noerror 'nomessage)
 
 (require 'on)          ;; Doom Style Hooks
@@ -86,8 +91,6 @@
   ;; Use Vim-style regular expressions in search and substitute commands,
   ;; allowing features like \v (very magic), \zs, and \ze for precise matches
   (evil-ex-search-vim-style-regexp t)
-  ;; Enable automatic horizontal split below
-  (evil-split-window-below t)
   ;; Enable automatic vertical split to the right
   (evil-vsplit-window-right t)
   ;; Disable echoing Evil state to avoid replacing eldoc
@@ -102,8 +105,6 @@
   (evil-want-C-u-delete t)
   ;; Enable fine-grained undo behavior
   (evil-want-fine-undo t)
-  ;; Allow moving cursor beyond end-of-line in visual block mode
-  (evil-move-beyond-eol t)
   ;; Whether Y yanks to the end of the line
   (evil-want-Y-yank-to-eol t)
   :config
@@ -177,7 +178,7 @@
 
 (nox/leader-keys
   "f"   '(:ignore t :wk "[F]ile")
-  "f c" `((lambda () (interactive) (find-file "~/.config/minimal-emacs.d/config.org")) :wk "[C]onfig File")
+  "f c" `((lambda () (interactive) (find-file ,(concat nox/emacs-directory "/config.org"))) :wk "[C]onfig File")
   "f s" '(save-buffer :wk "[S]ave Buffer")
   "f d" '(bufferfile-delete :wk "[D]elete File")
   "f r" '(bufferfile-rename :wk "[R]ename File")
@@ -399,6 +400,7 @@
   :hook
   (on-init-ui . doom-modeline-mode)
   :config
+  (setq doom-modeline-major-mode-icon nil)
   (setq line-number-mode nil)
   (setq column-number-mode nil)
   (setq find-file-visit-truename t)
@@ -1260,6 +1262,12 @@
     (kbd "C-S-j") '(lambda () (interactive) (persp-switch-by-number 2))
     (kbd "C-S-k") '(lambda () (interactive) (persp-switch-by-number 3))
     (kbd "C-S-l") '(lambda () (interactive) (persp-switch-by-number 4))))
+
+(use-package diff-hl
+  :hook (on-first-file . global-diff-hl-mode))
+
+(use-package magit
+  :commands (magit))
 
 (use-package projectile
   :hook
