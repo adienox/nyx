@@ -1859,6 +1859,9 @@ Easier switching of perspectives using simple bindings with follow vim motions k
 #+begin_src emacs-lisp
 
   (use-package magit
+    :hook
+    (git-commit-mode . (lambda () (mixed-pitch-mode -1)))
+    (git-commit-mode . evil-insert-state)
     :commands (magit))
 
 #+end_src
