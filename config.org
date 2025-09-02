@@ -1840,7 +1840,19 @@ Easier switching of perspectives using simple bindings with follow vim motions k
 #+begin_src emacs-lisp
 
   (use-package diff-hl
-    :hook (on-first-file . global-diff-hl-mode))
+    :hook
+    (on-first-file . global-diff-hl-mode)
+    (on-first-file . diff-hl-flydiff-mode)
+    :custom
+    (diff-hl-show-staged-changes nil)
+    :config
+    (set-face-attribute 'diff-hl-change nil
+                        :foreground (doom-color 'yellow)
+                        :background 'unspecified)
+    (set-face-attribute 'diff-hl-insert nil
+                        :background 'unspecified)
+    (set-face-attribute 'diff-hl-delete nil
+                        :background 'unspecified))
 
 #+end_src
 
