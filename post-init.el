@@ -8,7 +8,7 @@
 (add-to-list 'load-path (concat nox/emacs-directory "/libs/"))
 
 ;; Specify the custom file path and load the custom file quietly
-(setq custom-file (concat nox/emacs-directory "/custom-vars.el"))
+(setq custom-file (concat minimal-emacs-user-directory "custom-vars.el"))
 (load custom-file 'noerror 'nomessage)
 
 (require 'on)          ;; Doom Style Hooks
@@ -190,6 +190,7 @@
   "g g" '(magit-status :wk "[G]it Status")
   "g c" '(magit-commit-create :wk "[G]it Commit")
   "g n" '(diff-hl-next-hunk :wk "[N]ext hunk")
+  "g u" '(diff-hl-revert-hunk :wk "[U]ndo hunk")
   "g p" '(diff-hl-previous-hunk :wk "[P]revious hunk")
   "g s" '(diff-hl-stage-dwim :wk "[G]it Stage Hunk"))
 
@@ -240,6 +241,7 @@
 (nox/leader-keys
   "t"   '(:ignore t :wk "[T]oggle")
   "t e" '(eshell :wk "[E]shell")
+  "t t" '(toggle-theme :wk "[T]oggle theme")
   "t l" '(nox/split-and-open-elpaca-log :wk "[L]og Elpaca")
   "t c" '(olivetti-mode :wk "[C]olumn Fill Mode")
   "t d" '(toggle-window-dedicated :wk "[D]edicated Mode")
@@ -528,49 +530,29 @@
              (expand-file-name "~/Documents/ember/secrets/secrets.sops.yaml"))
             path))))
 
-(use-package avy
-  :commands
-  (evil-avy-goto-char-timer
-   nox/avy-jump-org-block
-   nox/avy-jump-to-link)
-  :custom
-  (avy-background t)
-  :config
-  (set-face-attribute 'avy-background-face nil
-                      :foreground 'unspecified
-                      :background 'unspecified
-                      :inherit    'shadow))
+(defvar nox/theme-changed-hook nil
+  "Hook run after a theme is changed.")
 
-(defun nox/avy-jump-org-block ()
-  "Jump to org block using Avy subsystem."
-  (interactive)
-  (avy-jump (rx line-start (zero-or-more blank) "#+begin_src")
-            :action 'goto-char)
-  ;; Jump _into_ the block:
-  (forward-line))
+(defun nox/run-theme-hook (&rest _)
+  "Run `nox/theme-changed-hook` after theme change."
+  (run-hooks 'nox/theme-changed-hook))
 
-(defun nox/avy-jump-to-link ()
-  "Jump to links using Avy subsystem."
-  (interactive)
-  (avy-jump (rx (or "http://" "https://")) :action 'goto-char))
+;; run `nox/theme-changed-hook' after load-theme
+(advice-add 'load-theme :after #'nox/run-theme-hook)
 
-(defun nox/open-in-reddigg (url &optional new-window)
-  "Open the provided url in reddigg"
-  (reddigg-view-comments url))
-
-(defun nox/parse-readwise (url &optional new-window)
-  "Extract, decode and open the save URL part from a given Readwise URL."
-  (if (string-match "https://wise\\.readwise\\.io/save\\?url=\\(.*\\)" url)
-      (browse-url (url-unhex-string (match-string 1 url)))
-    (error "Invalid URL format")))
-
-(setq browse-url-handlers
-      '(("^https?://www\\.reddit\\.com" . nox/open-in-reddigg)
-        ("^https?://arstechnica\\.com" . eww)
-        ("^https?://wise\\.readwise\\.io/save\\?url=" . nox/parse-readwise)
-        ("." . nox/browse-url-maybe-privately)))
-
-(setq browse-url-generic-program "firefox")
+(setq display-buffer-alist
+      '(("\\*Embark Collect\\*"
+         (display-buffer-in-side-window)
+         (side . right)
+         (window-width . 0.5)
+         (slot . 0)
+         (window-parameters . ((mode-line-format . none))))
+        ("\\*Embark Actions\\*"
+         (display-buffer-in-side-window)
+         (side . right)
+         (window-width . 0.5)
+         (slot . 1)
+         (window-parameters . ((mode-line-format . none))))))
 
 (use-package bufferfile
   :custom (bufferfile-use-vc t)
@@ -608,6 +590,149 @@
 
 ;; Add the function to hooks
 (add-hook! buffer-list-update #'nox/run-commands-for-buffer-names)
+
+(use-package buffer-terminator
+  :hook (on-first-input . buffer-terminator-mode))
+
+(use-package nerd-icons-ibuffer
+  :hook (ibuffer-mode . nerd-icons-ibuffer-mode))
+
+(use-package ibuffer
+  :ensure nil
+  :commands (ibuffer persp-ibuffer)
+  :hook
+  (ibuffer-mode . (lambda () (display-line-numbers-mode -1)))
+  (ibuffer-mode . (lambda () (visual-line-mode -1))))
+
+(use-package perspective
+  :hook
+  (on-init-ui . persp-mode)
+  :commands
+  (nox/list-perspectives persp-state-load)
+  :custom
+  (persp-state-default-file "~/.local/share/persp-state")
+  (persp-mode-prefix-key (kbd "C-c b"))
+  (persp-modestring-short t)
+  (persp-initial-frame-name "main")
+  (persp-modestring-dividers '("" "" ""))
+  :config
+  ;; auto save state every 2 mins
+  (run-with-timer 120 (* 15 60) 'persp-state-save)
+  (add-hook! kill-emacs #'persp-state-save))
+
+(defun nox/list-workspaces ()
+  "List all workspaces, numbering them and highlighting the current one."
+  (interactive)
+  (let* ((all-persp (persp-names))            ; all perspective names
+         (current (persp-name (persp-curr)))  ; active perspective
+         (msg (mapconcat
+               (lambda (p)
+                 (let* ((i (1+ (cl-position p all-persp :test #'equal)))
+                        (label (format "[%d] %s" i p)))
+                   (if (equal p current)
+                       (propertize label 'face `(:weight bold :foreground ,(doom-color 'orange)))
+                     label)))
+               all-persp
+               " ")))  ; <-- just space between items
+    (message "Workspaces: %s" msg)))
+
+(add-hook! persp-switch #'nox/list-workspaces)
+
+(defun nox/restore-perspectives ()
+  "Restores the last saved perspective-state and deletes all other frames"
+  (interactive)
+  (persp-state-load persp-state-default-file)
+  (delete-other-frames))
+
+;; auto load state when opening the first client frame
+(when (daemonp)
+  (add-hook 'server-after-make-frame-hook
+            (lambda ()
+              (unless (bound-and-true-p persp-mode)
+                (nox/restore-perspectives)))))
+
+(with-eval-after-load 'evil
+  (evil-define-key '(normal insert) 'global
+    (kbd "C-S-h") '(lambda () (interactive) (persp-switch-by-number 1))
+    (kbd "C-S-j") '(lambda () (interactive) (persp-switch-by-number 2))
+    (kbd "C-S-k") '(lambda () (interactive) (persp-switch-by-number 3))
+    (kbd "C-S-l") '(lambda () (interactive) (persp-switch-by-number 4))))
+
+(use-package avy
+  :commands
+  (evil-avy-goto-char-timer
+   nox/avy-jump-org-block
+   nox/avy-jump-to-link)
+  :custom
+  (avy-background t)
+  :config
+  (set-face-attribute 'avy-background-face nil
+                      :foreground 'unspecified
+                      :background 'unspecified
+                      :inherit    'shadow))
+
+(defun nox/avy-jump-org-block ()
+  "Jump to org block using Avy subsystem."
+  (interactive)
+  (avy-jump (rx line-start (zero-or-more blank) "#+begin_src")
+            :action 'goto-char)
+  ;; Jump _into_ the block:
+  (forward-line))
+
+(defun nox/avy-jump-to-link ()
+  "Jump to links using Avy subsystem."
+  (interactive)
+  (avy-jump (rx (or "http://" "https://")) :action 'goto-char))
+
+(defun avy-action-copy-whole-line (pt)
+  (save-excursion
+    (goto-char pt)
+    (cl-destructuring-bind (start . end)
+        (bounds-of-thing-at-point 'line)
+      (copy-region-as-kill start end)))
+  (select-window
+   (cdr
+    (ring-ref avy-ring 0)))
+  t)
+
+(defun avy-action-yank-whole-line (pt)
+  (avy-action-copy-whole-line pt)
+  (save-excursion (yank))
+  t)
+
+(defun avy-action-embark (pt)
+  (unwind-protect
+      (save-excursion
+        (goto-char pt)
+        (embark-act))
+    (select-window
+     (cdr (ring-ref avy-ring 0))))
+  t)
+
+(with-eval-after-load 'avy
+  (setf (alist-get ?y avy-dispatch-alist) 'avy-action-yank
+        (alist-get ?w avy-dispatch-alist) 'avy-action-copy
+        (alist-get ?W avy-dispatch-alist) 'avy-action-copy-whole-line
+        (alist-get ?Y avy-dispatch-alist) 'avy-action-yank-whole-line
+        (alist-get ?' avy-dispatch-alist) 'avy-action-embark))
+
+(defun nox/open-in-reddigg (url &optional new-window)
+  "Open the provided url in reddigg"
+  (reddigg-view-comments url))
+
+(defun nox/parse-readwise (url &optional new-window)
+  "Extract, decode and open the save URL part from a given Readwise URL."
+  (if (string-match "https://wise\\.readwise\\.io/save\\?url=\\(.*\\)" url)
+      (browse-url (url-unhex-string (match-string 1 url)))
+    (error "Invalid URL format")))
+
+(setq browse-url-handlers
+      '(("^https?://www\\.reddit\\.com" . nox/open-in-reddigg)
+        ("^https?://arstechnica\\.com" . eww)
+        ("^https?://wise\\.readwise\\.io/save\\?url=" . nox/parse-readwise)
+        ("." . nox/browse-url-maybe-privately)))
+
+(setq browse-url-generic-program "firefox")
 
 (use-package calendar
   :ensure nil
@@ -653,307 +778,6 @@
               (find-file filename))
           (message "Daily note for %04d-%02d-%02d does not exist!" year month day)))
     (message "Not in a calendar buffer.")))
-
-(use-package helpful
-  :commands
-  (helpful-callable helpful-variable helpful-key helpful-command helpful-at-point)
-  :hook
-  (helpful-mode . hide-mode-line-mode)
-  (helpful-mode . (lambda ()
-                    (set-window-dedicated-p (selected-window) t)))
-  :custom
-  (helpful-max-buffers 1)
-  :bind
-  ([remap describe-function] . helpful-callable)
-  ([remap describe-command]  . helpful-command)
-  ([remap describe-key]      . helpful-key)
-  ([remap describe-variable] . helpful-variable)
-  ([remap describe-symbol]   . helpful-symbol)
-  ([remap view-hello-file]   . helpful-at-point))
-
-(use-package transient :defer t)
-
-(use-package gptel
-  :commands gptel
-  :hook
-  (gptel-mode . evil-insert-state)
-  (gptel-post-stream . gptel-auto-scroll)
-  (gptel-post-response-functions . gptel-end-of-response)
-  :bind* (("C-c RET" . gptel-send))
-  :custom
-  (gptel-default-mode 'org-mode)
-  (gptel-api-key (nox/get-secret ".api.openai"))
-  :config
-  (gptel-make-perplexity "Perplexity"
-                         :key (nox/get-secret ".api.perplexity")
-                         :stream t)
-  (gptel-make-gemini "Gemini"
-                     :key (nox/get-secret ".api.gemini")
-                     :stream t))
-
-(use-package posframe :defer t)
-
-(use-package gptel-quick
-  :ensure (:host github :repo "karthink/gptel-quick")
-  :commands gptel-quick
-  :custom
-  (gptel-quick-display 'posframe))
-
-(use-package jinx
-  :hook
-  (on-first-input . global-jinx-mode)
-  :bind* (("C-/" . jinx-correct)))
-
-;; (use-package pdf-tools
-;;   :hook
-;;   (pdf-view-mode . (lambda ()
-;;                      (pdf-view-themed-minor-mode)
-;;                      (set (make-local-variable 'evil-normal-state-cursor) (list nil))))
-;;   :mode "\\.pdf\\'"
-;;   :bind (:map pdf-view-mode-map
-;;               ("j" . pdf-view-next-line-or-next-page)
-;;               ("k" . pdf-view-previous-line-or-previous-page)
-;;               ("C-=" . pdf-view-enlarge)
-;;               ("C--" . pdf-view-shrink))
-;;   :config
-;;   (package-initialize)
-;;   (pdf-tools-install)
-;;   (add-to-list 'revert-without-query ".pdf"))
-;;
-;; (use-package org-pdftools
-;;   :hook (org-mode . org-pdftools-setup-link))
-
-(use-package popper
-  :hook
-  (persp-mode  . popper-mode)
-  (popper-mode . popper-echo-mode)
-  (popper-open-popup . hide-mode-line-mode)
-  :bind* (("C-\\"   . popper-toggle)
-          ("C-|"    . popper-cycle)
-          ("C-M-\\" . popper-toggle-type))
-  :custom
-  (popper-group-function #'popper-group-by-perspective)
-  (popper-mode-line "")
-  (popper-window-height 20)
-  (popper-reference-buffers
-   '("\\*Messages\\*"
-     "\\*Async Shell Command\\*"
-     "^\\*eshell.*\\*$" eshell-mode
-     "^\\*shell.*\\*$"  shell-mode
-     "^\\*term.*\\*$"   term-mode
-     "^\\*vterm.*\\*$"  vterm-mode
-     "schedule.org"
-     calendar-mode
-     help-mode
-     inferior-python-mode
-     helpful-mode
-     use-package-statistics-mode
-     dictionary-mode
-     compilation-mode))
-  (popper-echo-transform-function #'nox/popper-truncate-string)
-  :config
-  (defun nox/popper-truncate-string (str)
-    "Truncate STR to 12 characters."
-    (if (> (length str) 12)
-        (substring str 0 12)
-      str)))
-
-(use-package vertico
-  :hook
-  (on-first-input . vertico-mode)
-  :custom
-  (vertico-count 13)
-  (vertico-resize t)
-  (vertico-cycle t)
-  :bind (:map vertico-map
-              ("C-j" . vertico-next)
-              ("C-M-j" . vertico-next-group)
-              ("C-k" . vertico-previous)
-              ("C-M-k" . vertico-previous-group)
-              ("M-RET" . vertico-exit-input)
-              ("<escape>" . vertico-exit))
-  :config
-  ;; Add » before the selected completion.
-  (advice-add #'vertico--format-candidate :around
-              (lambda (orig cand prefix suffix index _start)
-                (setq cand (funcall orig cand prefix suffix index _start))
-                (concat
-                 (if (= vertico--index index)
-                     (propertize "» " 'face 'vertico-current)
-                   "  ")
-                 cand))))
-
-(use-package vertico-directory
-  :after vertico
-  :ensure nil
-  ;; More convenient directory navigation commands
-  :bind (:map vertico-map
-              ("RET" . vertico-directory-enter)
-	          ("DEL" . vertico-directory-delete-char))
-  ;; Tidy shadowed file names
-  :hook (rfn-eshadow-update-overlay . vertico-directory-tidy))
-
-(use-package vertico-multiform
-  :ensure nil
-  :hook (vertico-mode . vertico-multiform-mode)
-  :config
-  (defvar +vertico-transform-functions nil)
-
-  (cl-defmethod vertico--format-candidate :around
-    (cand prefix suffix index start &context ((not +vertico-transform-functions) null))
-    (dolist (fun (ensure-list +vertico-transform-functions))
-      (setq cand (funcall fun cand)))
-    (cl-call-next-method cand prefix suffix index start))
-
-  (defun +vertico-highlight-directory (file)
-    "If FILE ends with a slash, highlight it as a directory."
-    (when (string-suffix-p "/" file)
-      (add-face-text-property 0 (length file) 'marginalia-file-priv-dir 'append file))
-    file)
-
-  (defun +vertico-highlight-enabled-mode (cmd)
-    "If MODE is enabled, highlight it as font-lock-constant-face."
-    (let ((sym (intern cmd)))
-      (with-current-buffer (nth 1 (buffer-list))
-        (if (or (eq sym major-mode)
-                (and
-                 (memq sym minor-mode-list)
-                 (boundp sym)
-                 (symbol-value sym)))
-            (add-face-text-property 0 (length cmd) 'font-lock-constant-face 'append cmd)))
-      cmd))
-
-  (add-to-list 'vertico-multiform-categories
-               '(file
-                 (+vertico-transform-functions . +vertico-highlight-directory)))
-  (add-to-list 'vertico-multiform-commands
-               '(execute-extended-command
-                 (+vertico-transform-functions . +vertico-highlight-enabled-mode))))
-
-(use-package orderless
-  :after vertico
-  :custom
-  (completion-styles '(orderless basic))
-  (completion-category-defaults nil)
-  (completion-category-overrides '((file (styles partial-completion)))))
-
-(use-package marginalia
-  :commands (marginalia-mode marginalia-cycle)
-  :hook (on-first-input . marginalia-mode))
-
-(use-package nerd-icons-completion
-  :after marginalia
-  :config
-  (add-hook! marginalia-mode #'nerd-icons-completion-marginalia-setup))
-
-(use-package embark
-  ;; Embark is an Emacs package that acts like a context menu, allowing
-  ;; users to perform context-sensitive actions on selected items
-  ;; directly from the completion interface.
-  :commands (embark-act
-             embark-dwim
-             embark-export
-             embark-collect
-             embark-bindings
-             embark-prefix-help-command)
-  :bind
-  (("C-." . embark-act)         ;; pick some comfortable binding
-   ("C-;" . embark-dwim)        ;; good alternative: M-.
-   ("C-h B" . embark-bindings)) ;; alternative for `describe-bindings'
-
-  :init
-  (setq prefix-help-command #'embark-prefix-help-command)
-
-  :config
-  ;; Hide the mode line of the Embark live/completions buffers
-  (add-to-list 'display-buffer-alist
-               '("\\`\\*Embark Collect \\(Live\\|Completions\\)\\*"
-                 nil
-                 (window-parameters (mode-line-format . none)))))
-
-(use-package embark-consult
-  :hook
-  (embark-collect-mode . consult-preview-at-point-mode))
-
-(use-package consult
-  ;; Enable automatic preview at point in the *Completions* buffer.
-  :hook (completion-list-mode . consult-preview-at-point-mode)
-  :bind
-  ([remap bookmark-jump] . consult-bookmark)
-  ([remap evil-show-marks] . consult-mark)
-  ([remap evil-show-registers] . consult-register)
-  ([remap goto-line] . consult-goto-line)
-  ([remap imenu] . consult-imenu)
-  ([remap Info-search] . consult-info)
-  ([remap locate] . consult-locate)
-  ([remap load-theme] . consult-theme)
-  ([remap recentf-open-files] . consult-recent-file)
-  ([remap switch-to-buffer] . consult-buffer)
-  ([remap switch-to-buffer-other-window] . consult-buffer-other-window)
-  ([remap switch-to-buffer-other-frame] . consult-buffer-other-frame)
-  ([remap yank-pop] . consult-yank-pop)
-  :init
-  ;; Optionally configure the register formatting. This improves the register
-  (setq register-preview-delay 0.5
-        register-preview-function #'consult-register-format)
-
-  ;; Optionally tweak the register preview window.
-  (advice-add #'register-preview :override #'consult-register-window)
-
-  ;; Use Consult to select xref locations with preview
-  (setq xref-show-xrefs-function #'consult-xref
-        xref-show-definitions-function #'consult-xref)
-
-  ;; Aggressive asynchronous that yield instantaneous results. (suitable for
-  ;; high-performance systems.) Note: Minad, the author of Consult, does not
-  ;; recommend aggressive values.
-  ;; Read: https://github.com/minad/consult/discussions/951
-  ;;
-  ;; However, the author of minimal-emacs.d uses these parameters to achieve
-  ;; immediate feedback from Consult.
-  (setq consult-async-input-debounce 0.02
-        consult-async-input-throttle 0.05
-        consult-async-refresh-delay 0.02)
-
-  :config
-  ;; persp with consult
-  (with-eval-after-load 'perspective
-    (consult-customize consult--source-buffer :hidden t :default nil)
-    (add-to-list 'consult-buffer-sources 'persp-consult-source))
-
-  (consult-customize
-   consult-theme :preview-key '(:debounce 0.2 any)
-   consult-ripgrep consult-git-grep consult-grep
-   consult-bookmark consult-recent-file consult-xref
-   consult--source-bookmark consult--source-file-register
-   consult--source-recent-file consult--source-project-recent-file
-   ;; :preview-key "M-."
-   :preview-key '(:debounce 0.4 any))
-  (setq consult-narrow-key "<"))
-
-(use-package emacs
-  :ensure nil
-  :custom
-  ;; Hide commands in M-x which do not work in the current mode.  Vertico
-  ;; commands are hidden in normal buffers. This setting is useful beyond
-  ;; Vertico.
-  (read-extended-command-predicate #'command-completion-default-include-p)
-  :init
-  ;; Add prompt indicator to `completing-read-multiple'.
-  ;; We display [CRM<separator>], e.g., [CRM,] if the separator is a comma.
-  (defun crm-indicator (args)
-    (cons (format "[CRM%s] %s"
-                  (replace-regexp-in-string
-                   "\\`\\[.*?]\\*\\|\\[.*?]\\*\\'" ""
-                   crm-separator)
-                  (car args))
-          (cdr args)))
-  (advice-add #'completing-read-multiple :filter-args #'crm-indicator)
-
-  ;; Do not allow the cursor in the minibuffer prompt
-  (setq minibuffer-prompt-properties
-        '(read-only t cursor-intangible t face minibuffer-prompt))
-  (add-hook! minibuffer-setup #'cursor-intangible-mode))
 
 (use-package dired
   :ensure nil
@@ -1046,6 +870,300 @@
                                 ("mkv" . "mpv")
                                 ("mp4" . "mpv"))))
 
+(use-package transient :defer t)
+
+(use-package gptel
+  :commands gptel
+  :hook
+  (gptel-mode . evil-insert-state)
+  (gptel-post-stream . gptel-auto-scroll)
+  (gptel-post-response-functions . gptel-end-of-response)
+  :bind* (("C-c RET" . gptel-send))
+  :custom
+  (gptel-default-mode 'org-mode)
+  (gptel-api-key (nox/get-secret ".api.openai"))
+  :config
+  (gptel-make-perplexity "Perplexity"
+                         :key (nox/get-secret ".api.perplexity")
+                         :stream t)
+  (gptel-make-gemini "Gemini"
+                     :key (nox/get-secret ".api.gemini")
+                     :stream t))
+
+(use-package posframe :defer t)
+
+(use-package gptel-quick
+  :ensure (:host github :repo "karthink/gptel-quick")
+  :commands gptel-quick
+  :custom
+  (gptel-quick-display 'posframe))
+
+(use-package helpful
+  :commands
+  (helpful-callable helpful-variable helpful-key helpful-command helpful-at-point)
+  :hook
+  (helpful-mode . hide-mode-line-mode)
+  (helpful-mode . (lambda ()
+                    (set-window-dedicated-p (selected-window) t)))
+  :custom
+  (helpful-max-buffers 1)
+  :bind
+  ([remap describe-function] . helpful-callable)
+  ([remap describe-command]  . helpful-command)
+  ([remap describe-key]      . helpful-key)
+  ([remap describe-variable] . helpful-variable)
+  ([remap describe-symbol]   . helpful-symbol)
+  ([remap view-hello-file]   . helpful-at-point))
+
+(use-package jinx
+  :hook
+  (on-first-input . global-jinx-mode)
+  :bind* (("C-/" . jinx-correct)))
+
+;; (use-package pdf-tools
+;;   :hook
+;;   (pdf-view-mode . (lambda ()
+;;                      (pdf-view-themed-minor-mode)
+;;                      (set (make-local-variable 'evil-normal-state-cursor) (list nil))))
+;;   :mode "\\.pdf\\'"
+;;   :bind (:map pdf-view-mode-map
+;;               ("j" . pdf-view-next-line-or-next-page)
+;;               ("k" . pdf-view-previous-line-or-previous-page)
+;;               ("C-=" . pdf-view-enlarge)
+;;               ("C--" . pdf-view-shrink))
+;;   :config
+;;   (package-initialize)
+;;   (pdf-tools-install)
+;;   (add-to-list 'revert-without-query ".pdf"))
+;;
+;; (use-package org-pdftools
+;;   :hook (org-mode . org-pdftools-setup-link))
+
+(use-package popper
+  :hook
+  (persp-mode  . popper-mode)
+  (popper-mode . popper-echo-mode)
+  (popper-open-popup . hide-mode-line-mode)
+  :bind* (("C-\\"   . popper-toggle)
+          ("C-|"    . popper-cycle)
+          ("C-M-\\" . popper-toggle-type))
+  :custom
+  (popper-group-function #'popper-group-by-perspective)
+  (popper-mode-line "")
+  (popper-window-height 20)
+  (popper-reference-buffers
+   '("\\*Messages\\*"
+     "\\*Async Shell Command\\*"
+     "^\\*eshell.*\\*$" eshell-mode
+     "^\\*shell.*\\*$"  shell-mode
+     "^\\*term.*\\*$"   term-mode
+     "^\\*vterm.*\\*$"  vterm-mode
+     "schedule.org"
+     calendar-mode
+     help-mode
+     inferior-python-mode
+     helpful-mode
+     use-package-statistics-mode
+     dictionary-mode
+     compilation-mode))
+  (popper-echo-transform-function #'nox/popper-truncate-string)
+  :config
+  (defun nox/popper-truncate-string (str)
+    "Truncate STR to 12 characters."
+    (if (> (length str) 12)
+        (substring str 0 12)
+      str)))
+
+(use-package consult
+  ;; Enable automatic preview at point in the *Completions* buffer.
+  :hook (completion-list-mode . consult-preview-at-point-mode)
+  :bind
+  ([remap bookmark-jump] . consult-bookmark)
+  ([remap evil-show-marks] . consult-mark)
+  ([remap evil-show-registers] . consult-register)
+  ([remap goto-line] . consult-goto-line)
+  ([remap imenu] . consult-imenu)
+  ([remap Info-search] . consult-info)
+  ([remap locate] . consult-locate)
+  ([remap load-theme] . consult-theme)
+  ([remap recentf-open-files] . consult-recent-file)
+  ([remap switch-to-buffer] . consult-buffer)
+  ([remap switch-to-buffer-other-window] . consult-buffer-other-window)
+  ([remap switch-to-buffer-other-frame] . consult-buffer-other-frame)
+  ([remap yank-pop] . consult-yank-pop)
+  :init
+  ;; Optionally configure the register formatting. This improves the register
+  (setq register-preview-delay 0.5
+        register-preview-function #'consult-register-format)
+
+  ;; Optionally tweak the register preview window.
+  (advice-add #'register-preview :override #'consult-register-window)
+
+  ;; Use Consult to select xref locations with preview
+  (setq xref-show-xrefs-function #'consult-xref
+        xref-show-definitions-function #'consult-xref)
+
+  ;; Aggressive asynchronous that yield instantaneous results. (suitable for
+  ;; high-performance systems.) Note: Minad, the author of Consult, does not
+  ;; recommend aggressive values.
+  ;; Read: https://github.com/minad/consult/discussions/951
+  ;;
+  ;; However, the author of minimal-emacs.d uses these parameters to achieve
+  ;; immediate feedback from Consult.
+  (setq consult-async-input-debounce 0.02
+        consult-async-input-throttle 0.05
+        consult-async-refresh-delay 0.02)
+
+  :config
+  ;; persp with consult
+  (with-eval-after-load 'perspective
+    (consult-customize consult--source-buffer :hidden t :default nil)
+    (add-to-list 'consult-buffer-sources 'persp-consult-source))
+
+  (consult-customize
+   consult-theme :preview-key '(:debounce 0.2 any)
+   consult-ripgrep consult-git-grep consult-grep
+   consult-bookmark consult-recent-file consult-xref
+   consult--source-bookmark consult--source-file-register
+   consult--source-recent-file consult--source-project-recent-file
+   ;; :preview-key "M-."
+   :preview-key '(:debounce 0.4 any))
+  (setq consult-narrow-key "<"))
+
+(use-package embark
+  ;; Embark is an Emacs package that acts like a context menu, allowing
+  ;; users to perform context-sensitive actions on selected items
+  ;; directly from the completion interface.
+  :commands (embark-act
+             embark-dwim
+             embark-export
+             embark-collect
+             embark-bindings
+             embark-prefix-help-command)
+  :bind*
+  (("C-'" . embark-act)
+   ("C-;" . embark-dwim))
+  (:map embark-general-map
+        ("?" . gptel-quick))
+  :init
+  (setq prefix-help-command #'embark-prefix-help-command))
+
+(use-package embark-consult
+  :hook
+  (embark-collect-mode . consult-preview-at-point-mode))
+
+(use-package emacs
+  :ensure nil
+  :custom
+  ;; Hide commands in M-x which do not work in the current mode.  Vertico
+  ;; commands are hidden in normal buffers. This setting is useful beyond
+  ;; Vertico.
+  (read-extended-command-predicate #'command-completion-default-include-p)
+  :init
+  ;; Add prompt indicator to `completing-read-multiple'.
+  ;; We display [CRM<separator>], e.g., [CRM,] if the separator is a comma.
+  (defun crm-indicator (args)
+    (cons (format "[CRM%s] %s"
+                  (replace-regexp-in-string
+                   "\\`\\[.*?]\\*\\|\\[.*?]\\*\\'" ""
+                   crm-separator)
+                  (car args))
+          (cdr args)))
+  (advice-add #'completing-read-multiple :filter-args #'crm-indicator)
+
+  ;; Do not allow the cursor in the minibuffer prompt
+  (setq minibuffer-prompt-properties
+        '(read-only t cursor-intangible t face minibuffer-prompt))
+  (add-hook! minibuffer-setup #'cursor-intangible-mode))
+
+(use-package marginalia
+  :commands (marginalia-mode marginalia-cycle)
+  :hook (on-first-input . marginalia-mode))
+
+(use-package nerd-icons-completion
+  :after marginalia
+  :config
+  (add-hook! marginalia-mode #'nerd-icons-completion-marginalia-setup))
+
+(use-package orderless
+  :after vertico
+  :custom
+  (completion-styles '(orderless basic))
+  (completion-category-defaults nil)
+  (completion-category-overrides '((file (styles partial-completion)))))
+
+(use-package vertico
+  :hook
+  (on-first-input . vertico-mode)
+  :custom
+  (vertico-count 13)
+  (vertico-resize t)
+  (vertico-cycle t)
+  :bind (:map vertico-map
+              ("C-j" . vertico-next)
+              ("C-M-j" . vertico-next-group)
+              ("C-k" . vertico-previous)
+              ("C-M-k" . vertico-previous-group)
+              ("M-RET" . vertico-exit-input)
+              ("<escape>" . vertico-exit))
+  :config
+  ;; Add » before the selected completion.
+  (advice-add #'vertico--format-candidate :around
+              (lambda (orig cand prefix suffix index _start)
+                (setq cand (funcall orig cand prefix suffix index _start))
+                (concat
+                 (if (= vertico--index index)
+                     (propertize "» " 'face 'vertico-current)
+                   "  ")
+                 cand))))
+
+(use-package vertico-directory
+  :after vertico
+  :ensure nil
+  ;; More convenient directory navigation commands
+  :bind (:map vertico-map
+              ("RET" . vertico-directory-enter)
+	          ("DEL" . vertico-directory-delete-char))
+  ;; Tidy shadowed file names
+  :hook (rfn-eshadow-update-overlay . vertico-directory-tidy))
+
+(use-package vertico-multiform
+  :ensure nil
+  :hook (vertico-mode . vertico-multiform-mode)
+  :config
+  (defvar +vertico-transform-functions nil)
+
+  (cl-defmethod vertico--format-candidate :around
+    (cand prefix suffix index start &context ((not +vertico-transform-functions) null))
+    (dolist (fun (ensure-list +vertico-transform-functions))
+      (setq cand (funcall fun cand)))
+    (cl-call-next-method cand prefix suffix index start))
+
+  (defun +vertico-highlight-directory (file)
+    "If FILE ends with a slash, highlight it as a directory."
+    (when (string-suffix-p "/" file)
+      (add-face-text-property 0 (length file) 'marginalia-file-priv-dir 'append file))
+    file)
+
+  (defun +vertico-highlight-enabled-mode (cmd)
+    "If MODE is enabled, highlight it as font-lock-constant-face."
+    (let ((sym (intern cmd)))
+      (with-current-buffer (nth 1 (buffer-list))
+        (if (or (eq sym major-mode)
+                (and
+                 (memq sym minor-mode-list)
+                 (boundp sym)
+                 (symbol-value sym)))
+            (add-face-text-property 0 (length cmd) 'font-lock-constant-face 'append cmd)))
+      cmd))
+
+  (add-to-list 'vertico-multiform-categories
+               '(file
+                 (+vertico-transform-functions . +vertico-highlight-directory)))
+  (add-to-list 'vertico-multiform-commands
+               '(execute-extended-command
+                 (+vertico-transform-functions . +vertico-highlight-enabled-mode))))
+
 ;; Using RETURN to follow links in Org/Evil
 ;; Unmap keys in 'evil-maps if not done, (setq org-return-follows-link t) will not work
 (with-eval-after-load 'evil-maps
@@ -1083,12 +1201,41 @@
   (org-hide-emphasis-markers t)
   (org-hide-leading-stars t))
 
+(use-package org-fragtog
+  :after org
+  :hook
+  (org-mode . (lambda ()
+                (add-hook! evil-insert-state-entry :local #'org-fragtog-mode)
+                (add-hook! evil-insert-state-exit  :local #'org-latex-preview)
+                (add-hook! evil-insert-state-exit  :local (org-fragtog-mode -1)))))
+
 (use-package org-roam
   :hook (org-mode . org-roam-db-autosync-mode)
   :custom
   (org-roam-directory (file-truename "~/Documents/org"))
   :config
   (setq org-roam-node-display-template (concat "${title:*} " (propertize "${tags:10}" 'face 'org-tag))))
+
+(use-package org-superstar
+  :hook
+  (org-mode . org-superstar-mode)
+  :custom
+  (org-superstar-headline-bullets-list
+   '("◉" "◈" "○" "▷"))
+  ;; Stop cycling bullets to emphasize hierarchy of headlines.
+  (org-superstar-cycle-headline-bullets nil)
+  ;; Hide away leading stars on terminal.
+  (org-superstar-leading-bullet nil)
+  ;; 42 = *
+  ;; 43 = +
+  ;; 45 = -
+  (org-superstar-item-bullet-alist '((42 . 8226) (43 . 10148) (45 . 8226)))
+  :config
+  (set-face-attribute 'org-superstar-leading nil :height 1.3)
+  (set-face-attribute 'org-superstar-header-bullet nil
+                      :height 1.2
+                      :inherit 'fixed-pitch)
+  (set-face-attribute 'org-superstar-item nil :height 1.2))
 
 (defun nox/transclusion-on-insert ()
   "Notify if point is inside a transclusion block when entering insert mode."
@@ -1111,14 +1258,6 @@
                       :background (doom-color 'bg-alt))
 
   (setq org-transclusion-exclude-elements '(property-drawer keyword)))
-
-(use-package org-fragtog
-  :after org
-  :hook
-  (org-mode . (lambda ()
-                (add-hook! evil-insert-state-entry :local #'org-fragtog-mode)
-                (add-hook! evil-insert-state-exit  :local #'org-latex-preview)
-                (add-hook! evil-insert-state-exit  :local (org-fragtog-mode -1)))))
 
 (setq-default prettify-symbols-alist
               '(("#+begin_src emacs-lisp" . "")
@@ -1149,27 +1288,6 @@
 
   (setq prettify-symbols-unprettify-at-point 'right-edge)
 
-(use-package org-superstar
-  :hook
-  (org-mode . org-superstar-mode)
-  :custom
-  (org-superstar-headline-bullets-list
-   '("◉" "◈" "○" "▷"))
-  ;; Stop cycling bullets to emphasize hierarchy of headlines.
-  (org-superstar-cycle-headline-bullets nil)
-  ;; Hide away leading stars on terminal.
-  (org-superstar-leading-bullet nil)
-  ;; 42 = *
-  ;; 43 = +
-  ;; 45 = -
-  (org-superstar-item-bullet-alist '((42 . 8226) (43 . 10148) (45 . 8226)))
-  :config
-  (set-face-attribute 'org-superstar-leading nil :height 1.3)
-  (set-face-attribute 'org-superstar-header-bullet nil
-                      :height 1.2
-                      :inherit 'fixed-pitch)
-  (set-face-attribute 'org-superstar-item nil :height 1.2))
-
 (use-package toc-org
   :hook (org-mode . toc-org-enable))
 
@@ -1195,97 +1313,38 @@
   (add-to-list 'org-structure-template-alist '("nix" . "src nix"))
   (add-to-list 'org-structure-template-alist '("py" . "src python")))
 
-(use-package nerd-icons-ibuffer
-  :hook (ibuffer-mode . nerd-icons-ibuffer-mode))
-
-(use-package ibuffer
-  :ensure nil
-  :commands (ibuffer persp-ibuffer)
-  :hook
-  (ibuffer-mode . (lambda () (display-line-numbers-mode -1)))
-  (ibuffer-mode . (lambda () (visual-line-mode -1))))
-
-(use-package buffer-terminator
-  :hook (on-first-input . buffer-terminator-mode))
-
-(use-package perspective
-  :hook
-  (on-init-ui . persp-mode)
-  :commands
-  (nox/list-perspectives persp-state-load)
-  :custom
-  (persp-state-default-file "~/.local/share/persp-state")
-  (persp-mode-prefix-key (kbd "C-c b"))
-  (persp-modestring-short t)
-  (persp-initial-frame-name "main")
-  (persp-modestring-dividers '("" "" ""))
-  :config
-  ;; auto save state every 2 mins
-  (run-with-timer 120 (* 15 60) 'persp-state-save)
-  (add-hook 'kill-emacs-hook #'persp-state-save))
-
-(defun nox/list-workspaces ()
-  "List all workspaces, numbering them and highlighting the current one."
-  (interactive)
-  (let* ((all-persp (persp-names))            ; all perspective names
-         (current (persp-name (persp-curr)))  ; active perspective
-         (msg (mapconcat
-               (lambda (p)
-                 (let* ((i (1+ (cl-position p all-persp :test #'equal)))
-                        (label (format "[%d] %s" i p)))
-                   (if (equal p current)
-                       (propertize label 'face `(:weight bold :foreground ,(doom-color 'orange)))
-                     label)))
-               all-persp
-               " ")))  ; <-- just space between items
-    (message "Workspaces: %s" msg)))
-
-;; Advice persp-switch
-(advice-add 'persp-switch :after (lambda (&rest _) (nox/list-workspaces)))
-
-(defun nox/restore-perspectives ()
-  "Restores the last saved perspective-state and deletes all other frames"
-  (interactive)
-  (persp-state-load persp-state-default-file)
-  (delete-other-frames))
-
-;; auto load state when opening the first client frame
-(when (daemonp)
-  (add-hook 'server-after-make-frame-hook
-            (lambda ()
-              (unless (bound-and-true-p persp-mode)
-                (nox/restore-perspectives)))))
-
-(with-eval-after-load 'evil
-  (evil-define-key '(normal insert) 'global
-    (kbd "C-S-h") '(lambda () (interactive) (persp-switch-by-number 1))
-    (kbd "C-S-j") '(lambda () (interactive) (persp-switch-by-number 2))
-    (kbd "C-S-k") '(lambda () (interactive) (persp-switch-by-number 3))
-    (kbd "C-S-l") '(lambda () (interactive) (persp-switch-by-number 4))))
-
-(use-package diff-hl
-  :hook (on-first-file . global-diff-hl-mode))
-
-(use-package magit
-  :commands (magit))
-
-(use-package projectile
-  :hook
-  (on-first-input . projectile-mode))
-
-(use-package treesit-auto
-  :ensure t
-  :custom
-  (treesit-auto-install 'prompt)
-  :hook (on-first-input . global-treesit-auto-mode)
-  :config
-  (treesit-auto-add-to-auto-mode-alist 'all))
-
 (use-package apheleia
   :ensure t
   :commands (apheleia-mode
              apheleia-global-mode)
   :hook ((prog-mode . apheleia-mode)))
+
+(use-package diff-hl
+  :hook
+  (on-first-file . global-diff-hl-mode)
+  (on-first-file . diff-hl-flydiff-mode)
+  :custom
+  (diff-hl-show-staged-changes nil)
+  (diff-hl-ask-before-revert-hunk nil))
+
+(defun nox/set-diff-hl-colors ()
+  "Set diff-hl-colors for current theme."
+
+  (set-face-attribute 'diff-hl-change nil
+                      :foreground (doom-color 'yellow)
+                      :background 'unspecified)
+  (set-face-attribute 'diff-hl-insert nil
+                      :background 'unspecified)
+  (set-face-attribute 'diff-hl-delete nil
+                      :background 'unspecified))
+
+(add-hook! (nox/theme-changed on-first-file) #'nox/set-diff-hl-colors)
+
+(use-package magit
+  :hook
+  (git-commit-mode . (lambda () (mixed-pitch-mode -1)))
+  (git-commit-mode . evil-insert-state)
+  :commands (magit))
 
 (use-package ligature
   :hook (on-first-input . global-ligature-mode)
@@ -1310,6 +1369,10 @@
                             "?=" "?." "??" ";;" "/*" "/=" "/>" "//" "__" "~~" "(*" "*)"
                             "<--" "<-<" "<<=" "<<-")))
 
+(use-package projectile
+  :hook
+  (on-first-input . projectile-mode))
+
 (use-package rainbow-delimiters
   :hook
   (prog-mode . rainbow-delimiters-mode)
@@ -1320,12 +1383,20 @@
   :hook
   (prog-mode . rainbow-mode))
 
+(use-package treesit-auto
+  :ensure t
+  :custom
+  (treesit-auto-install 'prompt)
+  :hook (on-first-input . global-treesit-auto-mode)
+  :config
+  (treesit-auto-add-to-auto-mode-alist 'all))
+
 (use-package eshell
   :commands eshell
   :ensure nil
   :config
-  (setq eshell-rc-script (concat nox/emacs-directory "eshell/profile")
-        eshell-aliases-file (concat nox/emacs-directory "eshell/aliases")
+  (setq eshell-rc-script (concat nox/emacs-directory "/eshell/profile")
+        eshell-aliases-file (concat nox/emacs-directory "/eshell/aliases")
         eshell-history-size 5000
         eshell-buffer-maximum-lines 5000
         eshell-hist-ignoredups t
@@ -1362,8 +1433,6 @@
   :commands vundo
   :custom
   (vundo-glyph-alist vundo-unicode-symbols)
-  :config
-  ;; Take less on-screen space.
-  (setq vundo-compact-display t))
+  (vundo-compact-display t))
 
 (with-eval-after-load 'evil (evil-define-key 'normal 'global (kbd "C-M-u") 'vundo))
